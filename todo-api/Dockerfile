@@ -5,10 +5,15 @@ FROM node:20-alpine AS base
 WORKDIR /app
 
 # Copiamos solo los manifiestos primero para aprovechar la cache de capas de Docker
-COPY package.json package-lock.json* ./
+# (nombres explícitos, sin patrones glob, para evitar copiar archivos no deseados)
+COPY package.json package-lock.json ./
 
-# Instalamos únicamente dependencias de producción
-RUN npm install --omit=dev --no-audit --no-fund
+# Instalamos únicamente dependencias de producción.
+# npm ci respeta exactamente las versiones fijadas en package-lock.json (a diferencia
+# de npm install, que puede resolver versiones nuevas dentro de los rangos del semver),
+# y --ignore-scripts evita que dependencias de terceros ejecuten scripts arbitrarios
+# durante la instalación (mitiga ataques de supply chain).
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Copiamos el resto del código fuente
 COPY src ./src
