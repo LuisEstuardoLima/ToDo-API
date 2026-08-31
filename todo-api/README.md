@@ -104,42 +104,6 @@ Guardar la salida (texto o captura) como evidencia, por ejemplo:
 trivy image luislima86/todo-api:1.0 > evidencias/trivy-scan.txt
 ```
 
-### Resultado del primer escaneo
-
-| Capa | CRITICAL | HIGH | MEDIUM | LOW | Total |
-|------|----------|------|--------|-----|-------|
-| Alpine (SO) | 0 | 4 | 14 | 32 | 50 |
-| Node.js (dependencias empaquetadas) | 1 | 19 | 6 | 2 | 28 |
-
-Al revisar el detalle, los 4 `HIGH` del sistema operativo eran CVEs de
-`openssl` (libcrypto3/libssl3) ya corregidos en versiones más nuevas del
-paquete Alpine. Los 28 hallazgos de "Node.js" —incluido el único `CRITICAL`,
-en `node-tar`— **no pertenecían a la aplicación**: venían de las dependencias
-internas del propio CLI de `npm` (`tar`, `glob`, `minimatch`,
-`brace-expansion`, `pacote`, `sigstore`, `ip-address`, `diff`,
-`@sigstore/core`), incluidas en la imagen base `node:20-alpine` pero
-innecesarias en tiempo de ejecución, ya que el contenedor arranca con
-`node src/index.js` y no con `npm`.
-
-### Corrección aplicada
-
-Se rediseñó el `Dockerfile` como build multi-stage:
-1. Una etapa `deps` que sí usa `npm ci` para instalar dependencias.
-2. Una etapa `runtime` final que corre `apk update && apk upgrade` (parches
-   de seguridad del SO) y elimina `/usr/local/lib/node_modules/npm` y sus
-   binarios, ya que no se usan en producción.
-
-### Resultado tras la corrección
-
-| Capa | CRITICAL | HIGH | MEDIUM | LOW | Total |
-|------|----------|------|--------|-----|-------|
-| Alpine (SO) | 0 | 0 | 0 | 0 | **0** |
-| Node.js | 0 | 0 | 0 | 0 | **0** |
-
-La imagen pasó de **78 vulnerabilidades (1 CRITICAL, 23 HIGH)** a **0**, y
-además quedó más liviana (52.2 MB) al no incluir el CLI de `npm` en el
-runtime.
-
 ## Publicar en Docker Hub
 
 ```bash
@@ -189,45 +153,3 @@ seguido):
    siguiendo únicamente esas instrucciones."**
    → Aporte: detectó que faltaban los comandos exactos de `curl` para probar
    la API y los pasos de Docker Hub, que ya se incorporaron arriba.
-
-## Hallazgos de Sonar corregidos
-
-SonarCloud reportó 3 hallazgos de seguridad, los 3 en el `Dockerfile`:
-
-1. **Copiar con patrón glob es sensible a seguridad** (`COPY package.json
-   package-lock.json* ./`) → corrección: nombrar los archivos explícitamente
-   (`COPY package.json package-lock.json ./`).
-2. **Usar dependencias sin fijar versiones resueltas es sensible a
-   seguridad** (`npm install`) → corrección: usar `npm ci`, que respeta
-   exactamente lo fijado en `package-lock.json`.
-3. **Omitir `--ignore-scripts` permite ejecutar scripts de terceros durante
-   la instalación** → corrección: agregar `--ignore-scripts` al comando de
-   instalación.
-
-Tras el commit con las correcciones, el nuevo análisis mostró **Quality Gate:
-Passed**, con 0 issues nuevos y 0 security hotspots.
-
-## Reflexión final
-
-El hallazgo más interesante del reto no estuvo en el código de la aplicación
-(Sonar marcó Reliability y Maintainability en A desde el primer análisis),
-sino en la imagen Docker: Trivy reportó 78 vulnerabilidades, incluida 1
-CRITICAL, pero al revisar el detalle, la mayoría no venían de mi código ni de
-`express`, sino de las dependencias internas del propio `npm` empaquetado en
-la imagen base (`node-tar`, `glob`, `minimatch`, entre otras). Eso me hizo
-entender que un escaneo de imagen no distingue automáticamente "esto es mío"
-de "esto vino con el sistema operativo o el runtime"; hay que leer el reporte
-con calma antes de decidir qué corregir. La corrección fue rediseñar el
-Dockerfile como build multi-stage, quitando `npm` de la imagen final (no se
-necesita para ejecutar `node src/index.js`) y actualizando los paquetes del
-sistema operativo con `apk upgrade`. Eso bajó el conteo de 78 a 0
-vulnerabilidades y, de paso, redujo el tamaño de la imagen. En Sonar, los 3
-hallazgos de seguridad detectados también estaban en el Dockerfile (patrón
-glob en `COPY`, `npm install` sin versiones fijas, falta de
-`--ignore-scripts`), lo que confirma que en un proyecto pequeño como este el
-Dockerfile termina siendo tan relevante para la seguridad como el propio
-código de la API. En general, el flujo DevSecOps deja claro que la IA acelera
-la primera versión del código y de la infraestructura, pero la calidad y la
-seguridad reales solo se confirman ejecutando las herramientas y entendiendo
-cada hallazgo antes de corregirlo, no aceptando sugerencias a ciegas ni
-descartando un CVE solo porque suena grave.
