@@ -45,5 +45,9 @@ USER appuser
 
 ENV NODE_ENV=production
 ENV PORT=8080
+# Se sobreescribe en build con --build-arg APP_VERSION=2.0 (ver ARG abajo),
+# o en runtime con -e APP_VERSION=2.0 si se prefiere no reconstruir la imagen.
+ARG APP_VERSION=1.0
+ENV APP_VERSION=${APP_VERSION}
 
 CMD ["node", "src/index.js"]
